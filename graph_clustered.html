@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Interactive Web Graph with Domain Clusters + Status Toggle</title>
+
+<style>
+  body { margin:0; font-family: sans-serif; overflow: auto; }
+  svg { width: 100%; height: 100vh; }
+
+  /* edges between nodes */
+  .link {
+    stroke: #999;
+    stroke-opacity: 0.6;
+  }
+
+  /* node circles */
+  .node {
+    stroke: #fff;
+    stroke-width: 1.5px;
+    cursor: pointer;
+  }
+
+  /* hover metadata */
+  .tooltip {
+    position: absolute;
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    pointer-events: none;
+  }
+
+  /* node labels */
+  .label {
+    font-size: 12px;
+    pointer-events: none;
+    text-anchor: middle;
+    fill: #333;
+  }
+
+  .controls {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 20;
+  }
+
+  .controls button {
+    padding: 8px 12px;
+    margin-right: 6px;
+    background: #69b3a2;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+</style>
+
+<body>
+
+<div class="controls">
+  <button id="toggleBtn">Toggle Node Labels</button>
+  <button id="statusToggle">Toggle Alive/Dead</button>
+</div>
+
+<svg></svg>
+<div class="tooltip" style="opacity:0"></div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+
+<script>
+d3.json("graph.json").then(graph => {
+
+  let width = window.innerWidth;
+  let height = window.innerHeight;
+
+  const svg = d3.select("svg")
+    .attr("width", width)
+    .attr("height", height);
+
+  const tooltip = d3.select(".tooltip");
+
+  /* preserve original domain-based colors */
+  graph.nodes.forEach(d => {
+    d._origColor = d.color || "#69b3a2";
+  });
+
+  /* -----------------------------
+     DEGREE CALCULATION
+     ----------------------------- */
+  const nodeDegrees = new Map(graph.nodes.map(n => [n.id, 0]));
+  graph.links.forEach(l => {
+    nodeDegrees.set(String(l.source), nodeDegrees.get(String(l.source)) + 1);
+    nodeDegrees.set(String(l.target), nodeDegrees.get(String(l.target)) + 1);
+  });
+  graph.nodes.forEach(n => n.degree = nodeDegrees.get(n.id) || 0);
+
+  /* node size scales with degree */
+  const radiusScale = d3.scaleSqrt()
+    .domain(d3.extent(graph.nodes, d => d.degree))
+    .range([8, 28]);
+
+  graph.nodes.forEach(d => d.radius = radiusScale(d.degree));
+
+  /* -----------------------------
+     DOMAIN CLUSTER CENTERS
+     ----------------------------- */
+  const domainMap = {};
+  graph.nodes.forEach(d => {
+    if (!domainMap[d.group]) domainMap[d.group] = [];
+    domainMap[d.group].push(d);
+  });
+
+  const domains = Object.keys(domainMap);
+  const clusterCenters = {};
+  let angle = 0;
+
+  domains.forEach(domain => {
+    clusterCenters[domain] = {
+      x: width/2 + Math.cos(angle) * width/3,
+      y: height/2 + Math.sin(angle) * height/3
+    };
+    angle += (2 * Math.PI) / domains.length;
+  });
+
+  /* -----------------------------
+     ZOOM CONTAINER
+     ----------------------------- */
+  const container = svg.append("g");
+
+  /* -----------------------------
+     FORCE SIMULATION
+     ----------------------------- */
+  const simulation = d3.forceSimulation(graph.nodes)
+    .force("link", d3.forceLink(graph.links)
+      .id(d => d.id)
+      .distance(120)
+      .strength(0.6))
+    .force("charge", d3.forceManyBody().strength(-350))
+    .force("collide", d3.forceCollide().radius(d => d.radius + 6))
+    .force("cluster", domainClusterForce(0.25))
+    .force("center", d3.forceCenter(width / 2, height / 2));
+
+  /* -----------------------------
+     LINKS
+     ----------------------------- */
+  const link = container.append("g")
+    .selectAll("line")
+    .data(graph.links)
+    .join("line")
+    .attr("class", "link");
+
+  /* -----------------------------
+     NODES
+     ----------------------------- */
+  const node = container.append("g")
+    .selectAll("circle")
+    .data(graph.nodes)
+    .join("circle")
+    .attr("class", "node")
+    .attr("r", d => d.radius)
+    .attr("fill", d => d._origColor)
+    .call(drag(simulation))
+    .on("click", (event, d) => {
+      let url = d.id;
+      if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+      window.open(encodeURI(url), "_blank");
+    });
+
+  /* -----------------------------
+     LABELS
+     ----------------------------- */
+  const labels = container.append("g")
+    .selectAll("text")
+    .data(graph.nodes)
+    .join("text")
+    .attr("class", "label")
+    .text("");
+
+  const topNodes = graph.nodes
+    .slice()
+    .sort((a, b) => b.degree - a.degree)
+    .slice(0, 5);
+
+  labels
+    .filter(d => topNodes.includes(d))
+    .text(d => d.id);
+
+  /* -----------------------------
+     TOOLTIP
+     ----------------------------- */
+  node.on("mouseover", (event, d) => {
+      tooltip
+        .style("opacity", 0.95)
+        .html(`
+          ${d.id}<br>
+          Degree: ${d.degree}<br>
+          Status: ${d.status}<br>
+          RT: ${d.response_time_ms ?? "N/A"} ms
+        `)
+        .style("left", (event.pageX + 10) + "px")
+        .style("top", (event.pageY - 10) + "px");
+    })
+    .on("mouseout", () => tooltip.style("opacity", 0));
+
+  /* -----------------------------
+     TICK UPDATE
+     ----------------------------- */
+  simulation.on("tick", () => {
+    link
+      .attr("x1", d => d.source.x)
+      .attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x)
+      .attr("y2", d => d.target.y);
+
+    node
+      .attr("cx", d => d.x)
+      .attr("cy", d => d.y);
+
+    labels
+      .attr("x", d => d.x)
+      .attr("y", d => d.y - d.radius - 4);
+  });
+
+  /* -----------------------------
+     DRAG HANDLER (FIXED)
+     ----------------------------- */
+  function drag(simulation) {
+    function dragstarted(event, d) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }
+
+    function dragged(event, d) {
+      d.fx = event.x;
+      d.fy = event.y;
+    }
+
+    function dragended(event, d) {
+      if (!event.active) simulation.alphaTarget(0);
+      d.fx = null;
+      d.fy = null;
+    }
+
+    return d3.drag()
+      .on("start", dragstarted)
+      .on("drag", dragged)
+      .on("end", dragended);
+  }
+
+  /* -----------------------------
+     DOMAIN CLUSTER FORCE
+     ----------------------------- */
+  function domainClusterForce(strength) {
+    return function(alpha) {
+      graph.nodes.forEach(d => {
+        const c = clusterCenters[d.group];
+        if (!c) return;
+        d.vx -= (d.x - c.x) * strength * alpha;
+        d.vy -= (d.y - c.y) * strength * alpha;
+      });
+    };
+  }
+  /* -----------------------------
+   NODE LABEL TOGGLE (3 Modes)
+   ----------------------------- */
+  let labelMode = 0; // 0 = top 5, 1 = top 5%, 2 = all
+  document.getElementById("toggleBtn").addEventListener("click", () => {
+    labelMode = (labelMode + 1) % 3;
+
+    // clear all labels first
+    labels.text("");
+
+    if (labelMode === 0) {
+      // Top 5 nodes
+      const top5 = graph.nodes
+        .slice()
+        .sort((a, b) => b.degree - a.degree)
+        .slice(0, 5);
+      labels.filter(d => top5.includes(d)).text(d => d.id);
+    } else if (labelMode === 1) {
+      // Top 5% nodes
+      const count = Math.ceil(graph.nodes.length * 0.05);
+      const top5Percent = graph.nodes
+        .slice()
+        .sort((a, b) => b.degree - a.degree)
+        .slice(0, count);
+      labels.filter(d => top5Percent.includes(d)).text(d => d.id);
+    } else {
+      // All nodes
+      labels.text(d => d.id);
+    }
+  });
+
+  /* -----------------------------
+   STATUS COLOR TOGGLE
+   ----------------------------- */
+  let statusActive = false;
+  document.getElementById("statusToggle").addEventListener("click", () => {
+    statusActive = !statusActive;
+    node.transition().duration(300)
+      .attr("fill", d => {
+        if (!statusActive) return d._origColor;
+        // Map status codes to colors
+        switch(d.status) {
+          case "alive":
+            return "#2a9d8f"; // green
+          case "dead":
+            return "#e63946"; // red
+          case "server_error":
+            return "#000000"; // black
+          default:
+            return "#999999"; // grey for unknown
+        }
+      });
+  });
+
+  /* -----------------------------
+     ZOOM & PAN
+     ----------------------------- */
+  svg.call(
+    d3.zoom()
+      .scaleExtent([0.2, 5])
+      .on("zoom", event => container.attr("transform", event.transform))
+  );
+
+}).catch(err => {
+  console.error("Error loading JSON:", err);
+});
+</script>
+
+</body>
+</html>
