@@ -18,7 +18,7 @@ As opposed to my LM8 Perl web crawler, this project goes beyond by collecting an
 
 ## Running the Project
 
-Right now, I have a [web crawler file](./crawler.pl), a [singular html file](graph_clustered.html), a [json file](graph.json) which is generated after the web crawler runs, a [text file](./urls.txt) which contains the urls which we start crawling from, and a [file that runs the program](run_graph.pl).
+Right now, I have a [web crawler file](./crawler.pl), a [singular html file](graph_clustered.html), a [json file](./data/graph.json) which is generated after the web crawler runs, a [text file](./urls.txt) which contains the urls which we start crawling from, and a [file that runs the program](run_graph.pl).
 
 In order to run the program, we only care about the last referenced file, it should be named run_graph.pl. 
 
@@ -57,7 +57,7 @@ If python3 doesn't exist, try python. If python also doesn't work, install pytho
 The html file loads the data directly from the json file. The line of code looks like this 
 
 ```html
-d3.json("graph.json").then(graph =>
+d3.json("./data/graph.json").then(graph =>
 ```
 
 Change the graph.json name to 10k.json and follow the above final step. You do not need to rerun the entire program, I did it once and saved it so it'll never have to be done again. 

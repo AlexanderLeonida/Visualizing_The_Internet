@@ -13,7 +13,7 @@ GetOptions(
 
 # paths
 my $cwd = getcwd();
-my $json_file = File::Spec->catfile($cwd, "graph.json");
+my $json_file = File::Spec->catfile($cwd, "./data/graph.json");
 my $html_file = File::Spec->catfile($cwd, "graph_clustered.html");
 
 # run the crawler

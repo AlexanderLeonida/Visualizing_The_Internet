@@ -10,7 +10,7 @@ use JSON;
 use Time::HiRes qw(gettimeofday tv_interval);
 
 # default cli config
-my ($url_file, $json_file, $max_pages) = ("urls.txt", "graph.json", 150);
+my ($url_file, $json_file, $max_pages) = ("urls.txt", "./data/graph.json", 150);
 
 # parse cli contents if passed in
 GetOptions(
